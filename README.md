@@ -1,5 +1,7 @@
 # homebrew-tap
 
+[![Build Status](https://travis-ci.org/hasso/homebrew-tap.svg?branch=master)](https://travis-ci.org/hasso/homebrew-tap)
+
 My custom tap of Homebrew formulas. At the moment there is a single one
 here – OpenSSH with a patch to support ECDSA keys from smartcards.
 The patch is from [OpenSSH Bugzilla](https://bugzilla.mindrot.org/show_bug.cgi?id=2474)
