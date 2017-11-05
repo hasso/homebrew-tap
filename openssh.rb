@@ -3,7 +3,7 @@ class Openssh < Formula
   homepage "https://www.openssh.com/"
   url "https://www.mirrorservice.org/pub/OpenBSD/OpenSSH/portable/openssh-7.6p1.tar.gz"
   mirror "https://ftp.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-7.6p1.tar.gz"
-  version "7.6p1"
+  version "7.6p1-r1"
   sha256 "a323caeeddfe145baaa0db16e98d784b1fbc7dd436a6bf1f479dfd5cd1d21723"
 
   # Please don't resubmit the keychain patch option. It will never be accepted.
@@ -23,8 +23,8 @@ class Openssh < Formula
   end
 
   patch do
-    url "https://bugzilla.mindrot.org/attachment.cgi?id=3069"
-    sha256 "0bba67605d025ed4d262fc8bbb92cac3c1f2117f67c527e42dabfa00ed4123e2"
+    url "https://raw.githubusercontent.com/hasso/homebrew-tap/master/patches/openssh-ecdsa-pkcs11-7.6p1.patch"
+    sha256 "91c2c90ba92a62e9855f5e1828514f67ad9ce53978c2b7d9772917d7ed96d133"
   end
 
   resource "com.openssh.sshd.sb" do
