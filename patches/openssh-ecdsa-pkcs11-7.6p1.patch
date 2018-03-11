@@ -1,6 +1,6 @@
 diff -ru openssh-7.6p1.orig/ssh-pkcs11-client.c openssh-7.6p1/ssh-pkcs11-client.c
 --- openssh-7.6p1.orig/ssh-pkcs11-client.c	2017-10-02 12:34:26.000000000 -0700
-+++ openssh-7.6p1/ssh-pkcs11-client.c	2017-10-19 21:23:42.000000000 -0700
++++ openssh-7.6p1/ssh-pkcs11-client.c	2017-11-24 23:21:57.000000000 -0800
 @@ -31,6 +31,14 @@
  #include <errno.h>
  
@@ -115,7 +115,7 @@ diff -ru openssh-7.6p1.orig/ssh-pkcs11-client.c openssh-7.6p1/ssh-pkcs11-client.
  		}
 diff -ru openssh-7.6p1.orig/ssh-pkcs11-helper.c openssh-7.6p1/ssh-pkcs11-helper.c
 --- openssh-7.6p1.orig/ssh-pkcs11-helper.c	2017-10-02 12:34:26.000000000 -0700
-+++ openssh-7.6p1/ssh-pkcs11-helper.c	2017-10-19 21:23:42.000000000 -0700
++++ openssh-7.6p1/ssh-pkcs11-helper.c	2017-12-20 15:09:06.000000000 -0800
 @@ -24,6 +24,16 @@
  
  #include "openbsd-compat/sys-queue.h"
@@ -142,7 +142,28 @@ diff -ru openssh-7.6p1.orig/ssh-pkcs11-helper.c openssh-7.6p1/ssh-pkcs11-helper.
  			free(ki);
  		}
  	}
-@@ -180,14 +190,31 @@
+@@ -164,6 +174,20 @@
+ 	buffer_free(&msg);
+ }
+ 
++#ifdef ENABLE_PKCS11_ECDSA
++static u_int EC_KEY_order_size(EC_KEY *key)
++{
++	const EC_GROUP *group = EC_KEY_get0_group(key);
++	BIGNUM *order = BN_new();
++	u_int nbytes = 0;
++	if ((group != NULL) && (order != NULL) && EC_GROUP_get_order(group, order, NULL)) {
++		nbytes = BN_num_bytes(order);
++	}
++	BN_clear_free(order);
++	return nbytes;
++}
++#endif /* ENABLE_PKCS11_ECDSA */
++
+ static void
+ process_sign(void)
+ {
+@@ -180,14 +204,36 @@
  	if ((key = key_from_blob(blob, blen)) != NULL) {
  		if ((found = lookup_key(key)) != NULL) {
  #ifdef WITH_OPENSSL
@@ -165,16 +186,21 @@ diff -ru openssh-7.6p1.orig/ssh-pkcs11-helper.c openssh-7.6p1/ssh-pkcs11-helper.
 +				}
 +#ifdef ENABLE_PKCS11_ECDSA
 +			} else if(found->type == KEY_ECDSA) {
-+				ECDSA_SIG *sig = NULL;
++				ECDSA_SIG *sig;
 +				if ((sig = ECDSA_do_sign(data, dlen, found->ecdsa)) != NULL) {
-+					int rlen = BN_num_bytes(sig->r);
-+					slen = BN_num_bytes(sig->s);
-+					signature = xmalloc(slen + rlen);
-+					BN_bn2bin(sig->r, signature);
-+					BN_bn2bin(sig->s, signature + rlen);
++					/* PKCS11 2.3.1 recommends both r and s to have the order size for
++					   backward compatiblity */
++					u_int o_len = EC_KEY_order_size(found->ecdsa);
++					u_int r_len = BN_num_bytes(sig->r);
++					u_int s_len = BN_num_bytes(sig->s);
++					if (o_len > 0 && r_len <= o_len && s_len <= o_len) {
++						signature = xcalloc(2, o_len);
++						BN_bn2bin(sig->r, signature + o_len - r_len);
++						BN_bn2bin(sig->s, signature + (2 * o_len) - s_len);
++						slen = 2 * o_len;
++						ok = 0;
++					}
 +					ECDSA_SIG_free(sig);
-+					slen += rlen;
-+					ok = 0;
 +				}
 +#endif /* ENABLE_PKCS11_ECDSA */
 +			} else {
@@ -184,7 +210,7 @@ diff -ru openssh-7.6p1.orig/ssh-pkcs11-helper.c openssh-7.6p1/ssh-pkcs11-helper.
  		}
 diff -ru openssh-7.6p1.orig/ssh-pkcs11.c openssh-7.6p1/ssh-pkcs11.c
 --- openssh-7.6p1.orig/ssh-pkcs11.c	2017-10-02 12:34:26.000000000 -0700
-+++ openssh-7.6p1/ssh-pkcs11.c	2017-11-04 01:15:17.000000000 -0700
++++ openssh-7.6p1/ssh-pkcs11.c	2017-11-30 02:44:29.000000000 -0800
 @@ -32,6 +32,15 @@
  #include "openbsd-compat/sys-queue.h"
  
@@ -312,7 +338,7 @@ diff -ru openssh-7.6p1.orig/ssh-pkcs11.c openssh-7.6p1/ssh-pkcs11.c
  	k11->provider = provider;
  	provider->refcount++;	/* provider referenced by RSA key */
  	k11->slotidx = slotidx;
-@@ -337,6 +359,146 @@
+@@ -337,6 +359,148 @@
  	return (0);
  }
  
@@ -429,8 +455,10 @@ diff -ru openssh-7.6p1.orig/ssh-pkcs11.c openssh-7.6p1/ssh-pkcs11.c
 +	k11->slotidx = slotidx;
 +	/* identify key object on smartcard */
 +	k11->keyid_len = keyid_attrib->ulValueLen;
-+	k11->keyid = xmalloc(k11->keyid_len);
-+	memcpy(k11->keyid, keyid_attrib->pValue, k11->keyid_len);
++	if (k11->keyid_len > 0) {
++		k11->keyid = xmalloc(k11->keyid_len);
++		memcpy(k11->keyid, keyid_attrib->pValue, k11->keyid_len);
++    }
 +	ECDSA_set_method(ecdsa, get_pkcs11_ecdsa_method());
 +	ECDSA_set_ex_data(ecdsa, pkcs11_key_idx, k11);
 +	return (0);
@@ -459,7 +487,7 @@ diff -ru openssh-7.6p1.orig/ssh-pkcs11.c openssh-7.6p1/ssh-pkcs11.c
  /* remove trailing spaces */
  static void
  rmspace(u_char *buf, size_t len)
-@@ -397,17 +559,19 @@
+@@ -397,17 +561,19 @@
   * keysp points to an (possibly empty) array with *nkeys keys.
   */
  static int pkcs11_fetch_keys_filter(struct pkcs11_provider *, CK_ULONG,
@@ -483,7 +511,7 @@ diff -ru openssh-7.6p1.orig/ssh-pkcs11.c openssh-7.6p1/ssh-pkcs11.c
  	};
  	CK_ATTRIBUTE		cert_filter[] = {
  		{ CKA_CLASS, NULL, sizeof(cert_class) }
-@@ -422,12 +586,31 @@
+@@ -422,12 +588,31 @@
  		{ CKA_SUBJECT, NULL, 0 },
  		{ CKA_VALUE, NULL, 0 }
  	};
@@ -517,7 +545,7 @@ diff -ru openssh-7.6p1.orig/ssh-pkcs11.c openssh-7.6p1/ssh-pkcs11.c
  	    keysp, nkeys) < 0)
  		return (-1);
  	return (0);
-@@ -446,11 +629,16 @@
+@@ -446,11 +631,16 @@
  
  static int
  pkcs11_fetch_keys_filter(struct pkcs11_provider *p, CK_ULONG slotidx,
@@ -535,7 +563,7 @@ diff -ru openssh-7.6p1.orig/ssh-pkcs11.c openssh-7.6p1/ssh-pkcs11.c
  	X509 			*x509;
  	EVP_PKEY		*evp;
  	int			i;
-@@ -464,7 +652,7 @@
+@@ -464,7 +654,7 @@
  	f = p->function_list;
  	session = p->slotinfo[slotidx].session;
  	/* setup a filter the looks for public keys */
@@ -544,7 +572,7 @@ diff -ru openssh-7.6p1.orig/ssh-pkcs11.c openssh-7.6p1/ssh-pkcs11.c
  		error("C_FindObjectsInit failed: %lu", rv);
  		return (-1);
  	}
-@@ -505,6 +693,9 @@
+@@ -505,6 +695,9 @@
  		 * or ID, subject and value for certificates.
  		 */
  		rsa = NULL;
@@ -554,7 +582,7 @@ diff -ru openssh-7.6p1.orig/ssh-pkcs11.c openssh-7.6p1/ssh-pkcs11.c
  		if ((rv = f->C_GetAttributeValue(session, obj, attribs, 3))
  		    != CKR_OK) {
  			error("C_GetAttributeValue failed: %lu", rv);
-@@ -517,6 +708,45 @@
+@@ -517,6 +710,45 @@
  				rsa->e = BN_bin2bn(attribs[2].pValue,
  				    attribs[2].ulValueLen, NULL);
  			}
@@ -600,7 +628,7 @@ diff -ru openssh-7.6p1.orig/ssh-pkcs11.c openssh-7.6p1/ssh-pkcs11.c
  		} else {
  			cp = attribs[2].pValue;
  			if ((x509 = X509_new()) == NULL) {
-@@ -535,13 +765,28 @@
+@@ -535,13 +767,28 @@
  			if (x509)
  				X509_free(x509);
  		}
@@ -636,7 +664,7 @@ diff -ru openssh-7.6p1.orig/ssh-pkcs11.c openssh-7.6p1/ssh-pkcs11.c
  			if (pkcs11_key_included(keysp, nkeys, key)) {
  				sshkey_free(key);
  			} else {
-@@ -554,6 +799,10 @@
+@@ -554,6 +801,10 @@
  			}
  		} else if (rsa) {
  			RSA_free(rsa);
@@ -649,7 +677,7 @@ diff -ru openssh-7.6p1.orig/ssh-pkcs11.c openssh-7.6p1/ssh-pkcs11.c
  			free(attribs[i].pValue);
 diff -ru openssh-7.6p1.orig/ssh-pkcs11.h openssh-7.6p1/ssh-pkcs11.h
 --- openssh-7.6p1.orig/ssh-pkcs11.h	2017-10-02 12:34:26.000000000 -0700
-+++ openssh-7.6p1/ssh-pkcs11.h	2017-10-19 21:23:42.000000000 -0700
++++ openssh-7.6p1/ssh-pkcs11.h	2017-11-24 23:21:57.000000000 -0800
 @@ -17,6 +17,7 @@
  int	pkcs11_init(int);
  void	pkcs11_terminate(void);
