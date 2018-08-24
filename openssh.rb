@@ -1,15 +1,17 @@
 class Openssh < Formula
   desc "OpenBSD freely-licensed SSH connectivity tools"
   homepage "https://www.openssh.com/"
-  url "https://www.mirrorservice.org/pub/OpenBSD/OpenSSH/portable/openssh-7.6p1.tar.gz"
-  mirror "https://ftp.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-7.6p1.tar.gz"
-  version "7.6p1-r2"
-  sha256 "a323caeeddfe145baaa0db16e98d784b1fbc7dd436a6bf1f479dfd5cd1d21723"
+  url "https://ftp.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-7.8p1.tar.gz"
+  mirror "https://mirror.vdms.io/pub/OpenBSD/OpenSSH/portable/openssh-7.8p1.tar.gz"
+  version "7.8p1"
+  sha256 "1a484bb15152c183bb2514e112aa30dd34138c3cfb032eee5490a66c507144ca"
 
   # Please don't resubmit the keychain patch option. It will never be accepted.
   # https://github.com/Homebrew/homebrew-dupes/pull/482#issuecomment-118994372
 
   depends_on "openssl"
+  depends_on "ldns" => :optional
+  depends_on "pkg-config" => :build if build.with? "ldns"
 
   # Both these patches are applied by Apple.
   patch do
@@ -23,8 +25,8 @@ class Openssh < Formula
   end
 
   patch do
-    url "https://raw.githubusercontent.com/hasso/homebrew-tap/master/patches/openssh-ecdsa-pkcs11-7.6p1.patch"
-    sha256 "bbd1f5039589fadcd9c28ad946e1c308a57eb7772eba9cf83c4a1dbfbd7d1d42"
+    url "https://raw.githubusercontent.com/hasso/homebrew-tap/master/patches/openssh-ecdsa-pkcs11-7.8p1.patch"
+    sha256 "a1cb8661f9e6e56c786bd410c26fc958f899065facf0fc2d31dd8a095e92f081"
   end
 
   resource "com.openssh.sshd.sb" do
@@ -39,12 +41,18 @@ class Openssh < Formula
     # We introduce this issue with patching, it's not an upstream bug.
     inreplace "sandbox-darwin.c", "@PREFIX@/share/openssh", etc/"ssh"
 
-    system "./configure", "--with-libedit",
-                          "--with-kerberos5",
-                          "--prefix=#{prefix}",
-                          "--sysconfdir=#{etc}/ssh",
-                          "--with-pam",
-                          "--with-ssl-dir=#{Formula["openssl"].opt_prefix}"
+    args = %W[
+      --with-libedit
+      --with-kerberos5
+      --prefix=#{prefix}
+      --sysconfdir=#{etc}/ssh
+      --with-pam
+      --with-ssl-dir=#{Formula["openssl"].opt_prefix}
+    ]
+
+    args << "--with-ldns" if build.with? "ldns"
+
+    system "./configure", *args
     system "make"
     ENV.deparallelize
     system "make", "install"
